@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "ChordAnalysisStore.h"
 #include "ChordAnalyzer.h"
 #include "NoteEvent.h"
 #include "NoteScheduler.h"
@@ -1016,6 +1017,110 @@ void testSilenceAndGaps()
           "the two segments read as C then G across the gap");
 }
 
+// ---------------------------------------------------------------------------------------------
+// RAL Phase 2C: chord-analysis integration. These exercise ChordAnalysisStore, the production
+// component TranscriptionManager delegates to -- it holds the latest chord results, refreshes them
+// when the note collection changes, clears them with the transcription, and guards against a stale
+// result from an older run. The full TranscriptionManager path needs a JUCE processor, synth,
+// soundfont and a transcription model, none unit-testable here; these test the real store it uses,
+// with the same call pattern (an increasing per-run session id + update()/clear()).
+// ---------------------------------------------------------------------------------------------
+
+constexpr int B4c = 71; // B
+constexpr int D5c = 74; // D above middle C
+
+std::vector<NoteEvent> cMajor()
+{
+    return {makeNote(0.0, 1.0, 60), makeNote(0.0, 1.0, 64), makeNote(0.0, 1.0, 67)}; // C E G
+}
+
+std::vector<NoteEvent> gMajorLater()
+{
+    return {makeNote(2.0, 3.0, 67), makeNote(2.0, 3.0, B4c), makeNote(2.0, 3.0, D5c)}; // G B D at t=2
+}
+
+void testIntegrationCompletedTranscriptionProducesChord()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    store.update(1, cMajor());
+    check(store.hasResults() && store.segments().size() == 1 && store.segments().front().best() != nullptr
+              && store.segments().front().best()->name == "C",
+          "a completed C-E-G transcription produces one C major chord result");
+}
+
+void testIntegrationEmptyTranscriptionProducesNoChords()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    store.update(1, {});
+    check(!store.hasResults() && store.segments().empty(), "an empty transcription produces no chord results");
+}
+
+void testIntegrationReplacingTranscriptionReplacesChords()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    store.update(1, cMajor());
+    check(store.segments().size() == 1 && store.segments().front().best()->name == "C", "first run reads as C");
+
+    // A different audio file -> a new run with a higher session id.
+    store.update(2, {makeNote(0.0, 1.0, 67), makeNote(0.0, 1.0, B4c), makeNote(0.0, 1.0, D5c)}); // G B D
+    check(store.segments().size() == 1 && store.segments().front().best() != nullptr
+              && store.segments().front().best()->name == "G",
+          "replacing the transcription replaces the previous chord results with G");
+}
+
+void testIntegrationClearClearsChords()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    store.update(1, cMajor());
+    check(store.hasResults(), "results present before clear");
+    store.clear();
+    check(!store.hasResults() && store.segments().empty(), "clearing the transcription clears the chord results");
+}
+
+void testIntegrationIncrementalUpdatesLeaveNoStaleResults()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+
+    // First decoded chunk: just the C major chord.
+    store.update(1, cMajor());
+    check(store.segments().size() == 1, "after the first chunk there is one chord");
+
+    // Next chunk of the SAME run: the full note set now also has a later G major. The results must
+    // reflect the whole current note collection, with no leftover from the first chunk.
+    auto full = cMajor();
+    const auto later = gMajorLater();
+    full.insert(full.end(), later.begin(), later.end());
+    store.update(1, full);
+    check(store.segments().size() == 2 && store.segments()[0].best() != nullptr
+              && store.segments()[0].best()->name == "C" && store.segments()[1].best() != nullptr
+              && store.segments()[1].best()->name == "G",
+          "an incremental update refreshes to C then G with no stale leftover");
+}
+
+void testIntegrationDoesNotMutateNotes()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    const auto original = cMajor();
+    auto notes = original;
+    store.update(1, notes);
+    check(notes == original, "analysis leaves the caller's note data unchanged");
+}
+
+void testIntegrationStaleSessionCannotOverwriteNewer()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+
+    // Newer run (session 2) has already produced its result.
+    store.update(2, cMajor());
+    check(store.segments().front().best()->name == "C", "newer session result present");
+
+    // A late result from an earlier run (session 1) arrives: it must be ignored.
+    const bool applied =
+        store.update(1, {makeNote(0.0, 1.0, 67), makeNote(0.0, 1.0, B4c), makeNote(0.0, 1.0, D5c)}); // G B D
+    check(!applied && store.segments().size() == 1 && store.segments().front().best()->name == "C",
+          "a stale result from a previous session cannot overwrite the newer chord results");
+}
+
 } // namespace
 
 int main()
@@ -1065,6 +1170,14 @@ int main()
     testEmptyAndAmbiguous();
     testInvalidPitchesExcluded();
     testSilenceAndGaps();
+
+    testIntegrationCompletedTranscriptionProducesChord();
+    testIntegrationEmptyTranscriptionProducesNoChords();
+    testIntegrationReplacingTranscriptionReplacesChords();
+    testIntegrationClearClearsChords();
+    testIntegrationIncrementalUpdatesLeaveNoStaleResults();
+    testIntegrationDoesNotMutateNotes();
+    testIntegrationStaleSessionCannotOverwriteNewer();
 
     if (gFailures > 0) {
         std::printf("%d check(s) failed\n", gFailures);

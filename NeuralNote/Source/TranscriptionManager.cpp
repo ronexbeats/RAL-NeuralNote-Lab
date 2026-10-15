@@ -259,6 +259,13 @@ void TranscriptionManager::_updatePostProcessing()
         // scheduler takes ownership of what it is given.
         auto notes_to_play = mPostProcessedNotes;
         mProcessor->getPlayer()->getSynthController()->setNotes(notes_to_play);
+
+        // Chord analysis is derived from the same notes, here on the message thread, so it stays in
+        // step with what getNoteEventVector returns. analyzeChords copies its input, so this does
+        // not touch mPostProcessedNotes. Recomputed on every meaningful note change (per decoded
+        // chunk and at completion) rather than only at the end: the cadence is already the chunk
+        // rate, not the timer's, and the analysis is cheap next to the post-processing above.
+        mChordStore.update(mChordSession, mPostProcessedNotes);
     }
 }
 
@@ -311,6 +318,11 @@ const std::vector<NoteEvent>& TranscriptionManager::getNoteEventVector() const
     return mPostProcessedNotes;
 }
 
+const std::vector<RAL::Analysis::ChordSegment>& TranscriptionManager::getChordSegments() const
+{
+    return mChordStore.segments();
+}
+
 MuscriptorEngine::Progress TranscriptionManager::getTranscriptionProgress() const
 {
     if (mProcessor->getState() == Paused) {
@@ -359,6 +371,7 @@ void TranscriptionManager::clear()
     mDiscardOnStop = false;
     mFinalizedThrough = 0.0;
     mPostProcessedNotes.clear();
+    mChordStore.clear();
     mTranscriptionModelSize.reset();
 
     {
@@ -414,6 +427,11 @@ void TranscriptionManager::startTranscription()
     mResumeProgress = 0.0f;
     mFinalizedThrough = 0.0;
     mPostProcessedNotes.clear();
+
+    // A new run: advance the chord session so its results replace the previous run's and no late
+    // result from an earlier run can land on this one, and drop any chords still on display.
+    ++mChordSession;
+    mChordStore.clear();
 
     // Every instrument this run finds is a new one, and should start at unity and unmuted rather
     // than inherit a fader from whatever was transcribed before.
@@ -586,6 +604,10 @@ void TranscriptionManager::restoreFromStateTree(const ValueTree& inFullState)
     } else {
         mProcessor->setStateToPaused();
     }
+
+    // A restored transcription is a new session for the chord store (clearTranscription above
+    // already cleared it); advance so its chords belong to this restore, not a prior run.
+    ++mChordSession;
 
     _updatePostProcessing();
     _repaintPianoRoll();

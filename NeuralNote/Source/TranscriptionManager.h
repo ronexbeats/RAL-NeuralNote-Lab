@@ -5,10 +5,12 @@
 #ifndef TranscriptionManager_h
 #define TranscriptionManager_h
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
 #include <JuceHeader.h>
+#include "ChordAnalysisStore.h"
 #include "MuscriptorEngine.h"
 #include "TranscriptionConstants.h"
 
@@ -45,6 +47,14 @@ public:
     void discardTranscription();
 
     const std::vector<NoteEvent>& getNoteEventVector() const;
+
+    /**
+     * @return The chords recognised in the current transcription, derived from the same note
+     *         vector getNoteEventVector returns and refreshed alongside it. Empty when there is no
+     *         transcription. Read-only; message thread only, the same convention as
+     *         getNoteEventVector. Phase 2C exposes this for later components; nothing consumes it yet.
+     */
+    const std::vector<RAL::Analysis::ChordSegment>& getChordSegments() const;
 
     /**
      * @return Phase and progress of the current/last transcription. While paused, the progress the
@@ -176,6 +186,15 @@ private:
     double mFinalizedThrough = 0.0;
 
     std::vector<NoteEvent> mPostProcessedNotes;
+
+    // Chords recognised from mPostProcessedNotes, refreshed in _updatePostProcessing and cleared
+    // with the transcription. Message thread only, like mPostProcessedNotes itself.
+    RAL::Analysis::ChordAnalysisStore mChordStore;
+
+    // Identifies the current transcription run for the chord store's stale-result guard. Bumped
+    // when a new run starts or a saved transcription is restored, kept across a resume (same run),
+    // and only ever increases, so a late result from an earlier run cannot replace a newer one.
+    std::uint64_t mChordSession = 0;
 
     // Written by the job, then published by mJobFinished.
     MuscriptorEngine::Outcome mJobOutcome = MuscriptorEngine::Outcome::Success;
