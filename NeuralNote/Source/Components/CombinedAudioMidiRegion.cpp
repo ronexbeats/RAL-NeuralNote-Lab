@@ -13,11 +13,13 @@ CombinedAudioMidiRegion::CombinedAudioMidiRegion(NeuralNoteAudioProcessor* proce
     , mSupportedAudioFileExtensions(AudioUtils::getSupportedAudioFileExtensions())
     , mAudioRegion(processor, mBaseNumPixelsPerSecond)
     , mTimeRuler(processor, mBaseNumPixelsPerSecond)
+    , mChordTimeline(processor, mBaseNumPixelsPerSecond)
     , mPianoRoll(processor, keyboard, mBaseNumPixelsPerSecond)
 {
     mProcessor->addListenerToStateValueTree(this);
     addAndMakeVisible(mAudioRegion);
     addAndMakeVisible(mTimeRuler);
+    addAndMakeVisible(mChordTimeline);
     addAndMakeVisible(mPianoRoll);
     mProcessor->getSourceAudioManager()->addChangeListener(this);
     _setZoomLevel(mProcessor->getValueTree().getProperty(NnId::ZoomLevelId, 1.0));
@@ -33,7 +35,16 @@ void CombinedAudioMidiRegion::resized()
 {
     mAudioRegion.setBounds(0, 0, getWidth(), mAudioRegionHeight);
     mTimeRuler.setBounds(0, mAudioRegionHeight, getWidth(), mRulerHeight);
-    mPianoRoll.setBounds(0, mPianoRollY, getWidth(), getHeight() - mPianoRollY);
+
+    // The chord lane sits directly above the piano roll and shares this region's time axis. When
+    // the view preference hides it, its height is 0 and the piano roll reclaims the space; the
+    // matching reservation in VisualizationPanel's gutter keeps the keyboard aligned either way.
+    const int lane_height = getChordLaneHeight();
+    mChordTimeline.setBounds(0, mChordLaneY, getWidth(), lane_height);
+    mChordTimeline.setVisible(lane_height > 0);
+
+    const int piano_roll_y = mChordLaneY + lane_height;
+    mPianoRoll.setBounds(0, piano_roll_y, getWidth(), getHeight() - piano_roll_y);
 }
 
 void CombinedAudioMidiRegion::paint(Graphics& g)
@@ -63,7 +74,7 @@ void CombinedAudioMidiRegion::mouseWheelMove(const MouseEvent& event, const Mous
 
     // Over the piano roll, a vertical wheel moves through pitches: it is the only band that can be
     // taller than the space it has. Horizontal still moves through time, here as everywhere else.
-    if (event.y >= mPianoRollY && !approximatelyEqual(wheel.deltaY, 0.0f)) {
+    if (event.y >= mChordLaneY + getChordLaneHeight() && !approximatelyEqual(wheel.deltaY, 0.0f)) {
         mKeyboard.scrollByWheel(event.getEventRelativeTo(&mKeyboard), wheel);
         return;
     }
@@ -135,6 +146,13 @@ void CombinedAudioMidiRegion::setBaseWidth(int inWidth)
 void CombinedAudioMidiRegion::repaintPianoRoll()
 {
     mPianoRoll.repaint();
+    mChordTimeline.repaint();
+}
+
+int CombinedAudioMidiRegion::getChordLaneHeight() const
+{
+    const bool show = mProcessor->getValueTree().getProperty(NnId::ShowChordLaneId, true);
+    return show ? nn::metrics::chordLaneHeight : 0;
 }
 
 void CombinedAudioMidiRegion::updateEnablements()
@@ -263,6 +281,7 @@ void CombinedAudioMidiRegion::_setZoomLevel(double inZoomLevel)
     mZoomLevel = std::clamp(inZoomLevel, _minZoomLevel(), mMaxZoomLevel);
     mPianoRoll.setZoomLevel(mZoomLevel);
     mTimeRuler.setZoomLevel(mZoomLevel);
+    mChordTimeline.setZoomLevel(mZoomLevel);
     mAudioRegion.setZoomLevel(mZoomLevel);
     mProcessor->getValueTree().setPropertyExcludingListener(this, NnId::ZoomLevelId, mZoomLevel, nullptr);
     resizeAccordingToNumSamplesAvailable();
@@ -275,5 +294,9 @@ void CombinedAudioMidiRegion::valueTreePropertyChanged(ValueTree& treeWhosePrope
         auto time_start_view = mViewportPtr->getViewPositionX() / (mBaseNumPixelsPerSecond * mZoomLevel);
         _setZoomLevel(treeWhosePropertyHasChanged.getProperty(property));
         mViewportPtr->setViewPosition(roundToInt(time_start_view * mBaseNumPixelsPerSecond * mZoomLevel), 0);
+    } else if (property == NnId::ShowChordLaneId) {
+        // Showing or hiding the chord lane re-stacks this region; the piano roll grows or shrinks
+        // by the lane's height. VisualizationPanel reserves the matching gutter height separately.
+        resized();
     }
 }

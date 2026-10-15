@@ -242,6 +242,8 @@ constexpr int topBarHeight = 54;
 constexpr int toolbarHeight = 44;
 constexpr int waveformHeight = 126;
 constexpr int rulerHeight = 22;
+// The chord-label lane that sits between the ruler and the piano roll. Compact, one line of text.
+constexpr int chordLaneHeight = 20;
 constexpr int statusBarHeight = 26;
 
 constexpr int sidebarWidth = 262;

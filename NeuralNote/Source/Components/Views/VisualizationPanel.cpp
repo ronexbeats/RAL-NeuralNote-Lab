@@ -79,6 +79,10 @@ void VisualizationPanel::valueTreePropertyChanged(juce::ValueTree& inTree, const
     // Reset piano roll zoom writes it back to automatic, and a restored session brings its own value.
     if (inProperty == NnId::VerticalZoomId) {
         _applyVerticalZoom();
+    } else if (inProperty == NnId::ShowChordLaneId) {
+        // Toggling the chord lane changes the gutter reservation and the piano roll height, so lay
+        // the whole panel out again.
+        resized();
     }
 }
 
@@ -150,7 +154,11 @@ void VisualizationPanel::resized()
     // The gutter and the keyboard sit outside the viewport, at the same width the waveform, ruler
     // and piano roll each reserve on their left. That is what aligns the three time axes.
     auto gutter_column = bounds.removeFromLeft(nn::metrics::timelineGutter);
-    mGutter.setBounds(gutter_column.removeFromTop(nn::metrics::waveformHeight + nn::metrics::rulerHeight));
+    // Reserve the chord lane's height above the keyboard too, so the keyboard top stays aligned
+    // with the piano roll top once the lane pushes the roll down inside the viewport. 0 when hidden.
+    const int chord_lane_height = mCombinedAudioMidiRegion.getChordLaneHeight();
+    mGutter.setBounds(
+        gutter_column.removeFromTop(nn::metrics::waveformHeight + nn::metrics::rulerHeight + chord_lane_height));
     mKeyboard.setBounds(gutter_column);
 
     mAudioMidiViewport.setBounds(bounds);

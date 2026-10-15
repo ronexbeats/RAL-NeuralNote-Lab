@@ -38,6 +38,10 @@ inline static Identifier MidiOverflowModeId = "MIDI_OVERFLOW_MODE";
 
 inline static Identifier ZoomLevelId = "ZOOM_LEVEL";
 
+// Whether the read-only chord-label lane above the piano roll is shown. View preference only; it
+// does not affect transcription or chord analysis.
+inline static Identifier ShowChordLaneId = "SHOW_CHORD_LANE";
+
 // The piano roll's vertical zoom, as the slider's normalised position. Negative means the view has
 // not been told what to show and picks the zoom that fits the transcription; moving the slider is
 // what takes it off that, and Reset piano roll zoom is what puts it back.
@@ -98,6 +102,7 @@ const std::vector<std::pair<Identifier, var>> OrderedStatePropertiesWithDefault 
     {PlayheadCenteredId, true},
     {LoopEnabledId, false},
     {ZoomLevelId, 1.0},
+    {ShowChordLaneId, true},
     {VerticalZoomId, -1.0},
     {SelectedInstrumentGroupsId, String()}};
 

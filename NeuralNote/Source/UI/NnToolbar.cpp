@@ -74,6 +74,24 @@ NnToolbar::NnToolbar(NeuralNoteAudioProcessor& inProcessor)
     mClearButton.onClick = [this] { _clearOneStep(); };
     addAndMakeVisible(mClearButton);
 
+    // A plain toggle: on shows the chord lane, off hides it. It only writes the view preference, so
+    // it never touches transcription or chord-analysis data.
+    mChordLaneButton.setLabel("Chords", nn::fonts::buttonLabel());
+    mChordLaneButton.setPadding(12, 12, 7);
+    mChordLaneButton.setClickingTogglesState(true);
+    mChordLaneButton.setColour(NnFlatButton::backgroundColourId, nn::colours::bgControlAlt);
+    mChordLaneButton.setColour(NnFlatButton::backgroundOnColourId, nn::colours::accentFillToggle());
+    mChordLaneButton.setColour(NnFlatButton::textColourId, nn::colours::textButton);
+    mChordLaneButton.setColour(NnFlatButton::textOnColourId, nn::colours::accentText);
+    mChordLaneButton.setToggleState(mProcessor.getValueTree().getProperty(NnId::ShowChordLaneId, true),
+                                    juce::dontSendNotification);
+    mChordLaneButton.setTooltip("Show or hide the chord lane above the piano roll");
+    mChordLaneButton.setWantsKeyboardFocus(false);
+    mChordLaneButton.onClick = [this] {
+        mProcessor.getValueTree().setProperty(NnId::ShowChordLaneId, mChordLaneButton.getToggleState(), nullptr);
+    };
+    addAndMakeVisible(mChordLaneButton);
+
     updateEnablements();
 }
 
@@ -91,6 +109,7 @@ void NnToolbar::resized()
     place_right(mClearButton, button_height);
     place_right(mDragButton, mDragButton.getIdealWidth());
     place_right(mExportButton, mExportButton.getIdealWidth());
+    place_right(mChordLaneButton, mChordLaneButton.getIdealWidth());
 
     const int label_width =
         juce::roundToInt(std::ceil(nn::trackedTextWidth("EXPORT TEMPO", nn::fonts::pillLabel(), LABEL_TRACKING)));

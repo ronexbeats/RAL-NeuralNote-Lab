@@ -8,6 +8,7 @@
 #include <JuceHeader.h>
 
 #include "AudioRegion.h"
+#include "ChordTimeline.h"
 #include "Keyboard.h"
 #include "NnLook.h"
 #include "PianoRoll.h"
@@ -69,11 +70,16 @@ public:
 
     const double mBaseNumPixelsPerSecond = 100.0;
 
-    // The waveform, the ruler and the piano roll are stacked inside this one scrolling region, so
-    // their time axes cannot drift apart -- which is the whole reason the ruler lives here.
+    // The waveform, the ruler, the chord lane and the piano roll are stacked inside this one
+    // scrolling region, so their time axes cannot drift apart -- which is the whole reason the
+    // ruler lives here.
     static constexpr int mAudioRegionHeight = nn::metrics::waveformHeight;
     static constexpr int mRulerHeight = nn::metrics::rulerHeight;
-    static constexpr int mPianoRollY = mAudioRegionHeight + mRulerHeight;
+    // Top of the chord lane; the piano roll follows it, offset by the lane's height when shown.
+    static constexpr int mChordLaneY = mAudioRegionHeight + mRulerHeight;
+
+    /** @return The chord lane's height, or 0 when the view preference hides it. */
+    int getChordLaneHeight() const;
 
 private:
     void _onVBlankCallback();
@@ -113,6 +119,7 @@ private:
 
     AudioRegion mAudioRegion;
     TimeRuler mTimeRuler;
+    ChordTimeline mChordTimeline;
     PianoRoll mPianoRoll;
 };
 

@@ -32,19 +32,22 @@ public:
      *
      * `inSession` identifies the transcription run the notes came from and only ever increases.
      * An update whose session is older than the newest one already applied is ignored, so a late
-     * result from a previous run can never replace a newer one. Equal sessions are applied, which
-     * is how a run's incremental chunks refresh its own results.
+     * result from a previous run can never replace a newer one. An equal session is applied only
+     * while the store has not been cleared since its last apply, which is how a run's incremental
+     * chunks refresh its own results; once cleared, only a strictly newer session repopulates, so a
+     * late same-session result cannot resurrect a cleared transcription.
      *
      * `inNotes` is read through analyzeChords, which copies it; the caller's notes are not touched.
      *
-     * @return true if the held segments were replaced, false if the update was ignored as stale.
+     * @return true if the held segments were replaced, false if the update was ignored.
      */
     bool update(std::uint64_t inSession,
                 const std::vector<NoteEvent>& inNotes,
                 const ChordAnalyzerOptions& inOptions = {});
 
-    /** Drops all held segments. The session high-water mark is kept, so a stale update that was in
-     *  flight for an already-finished run still cannot repopulate it. */
+    /** Drops all held segments. The session high-water mark is kept and the store is marked
+     *  cleared, so neither an older nor a same-session update can repopulate it -- only a strictly
+     *  newer run can. */
     void clear();
 
     /** The latest segments. Reference valid until the next update()/clear(); message thread only. */
@@ -58,6 +61,9 @@ public:
 private:
     std::vector<ChordSegment> mSegments;
     std::uint64_t mSession = 0;
+    // True once clear() has run with no apply since: an equal-session update is then refused, so a
+    // cleared transcription cannot be repopulated by a late result carrying its own session id.
+    bool mClearedSinceApply = false;
 };
 
 } // namespace RAL::Analysis

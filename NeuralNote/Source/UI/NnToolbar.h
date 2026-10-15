@@ -48,6 +48,8 @@ private:
     NnFlatButton mExportButton {"ExportMidiOut"};
     MidiFileDrag mDragButton;
     NnFlatButton mClearButton {"Clear"};
+    // View toggle for the read-only chord lane; writes NnId::ShowChordLaneId only.
+    NnFlatButton mChordLaneButton {"ChordLane"};
 
     juce::Rectangle<int> mTempoPill;
 

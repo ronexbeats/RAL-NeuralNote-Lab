@@ -10,6 +10,7 @@
 
 #include "ChordAnalysisStore.h"
 #include "ChordAnalyzer.h"
+#include "ChordLabelLayout.h"
 #include "NoteEvent.h"
 #include "NoteScheduler.h"
 #include "PianoRollRange.h"
@@ -1121,6 +1122,85 @@ void testIntegrationStaleSessionCannotOverwriteNewer()
           "a stale result from a previous session cannot overwrite the newer chord results");
 }
 
+// ---------------------------------------------------------------------------------------------
+// RAL Phase 2D: session-state hardening (Step 2) and chord-label lane geometry (ChordLabelLayout).
+// ---------------------------------------------------------------------------------------------
+
+void testStoreSameSessionUpdateAppliesWhileLive()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    store.update(1, cMajor());
+    // Same session, no clear in between: an incremental chunk must still refresh.
+    const bool applied = store.update(1, gMajorLater());
+    check(applied && store.hasResults(), "a same-session update refreshes a live run");
+}
+
+void testStoreClearThenSameSessionRejected()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    store.update(1, cMajor());
+    store.clear();
+    // A late result carrying the cleared run's own session id must not repopulate the store.
+    const bool applied = store.update(1, cMajor());
+    check(!applied && !store.hasResults(),
+          "after clear, a same-session update cannot repopulate the cleared transcription");
+}
+
+void testStoreNewSessionAfterClearApplies()
+{
+    RAL::Analysis::ChordAnalysisStore store;
+    store.update(1, cMajor());
+    store.clear();
+    // Only a strictly newer run may populate again.
+    const bool applied = store.update(2, cMajor());
+    check(applied && store.hasResults() && store.segments().front().best()->name == "C",
+          "after clear, a strictly newer session repopulates normally");
+}
+
+void testChordLabelPositionsAndZoom()
+{
+    // C major at 0-1 s, G major at 2-3 s.
+    std::vector<NoteEvent> notes = {makeNote(0.0, 1.0, 60), makeNote(0.0, 1.0, 64), makeNote(0.0, 1.0, 67),
+                                    makeNote(2.0, 3.0, 67), makeNote(2.0, 3.0, B4c), makeNote(2.0, 3.0, D5c)};
+    const auto segments = RAL::Analysis::analyzeChords(notes);
+
+    auto labels = RAL::Analysis::layoutChordLabels(segments, 100.0, 26.0f);
+    check(labels.size() == 2 && std::abs(labels[0].x - 0.0f) < 1e-3f && std::abs(labels[0].width - 100.0f) < 1e-3f
+              && labels[0].text == "C" && std::abs(labels[1].x - 200.0f) < 1e-3f && labels[1].text == "G",
+          "labels sit at time*pixelsPerSecond with correct widths and names");
+
+    // Zoom: doubling pixels-per-second doubles every x and width (same geometry the roll uses).
+    auto zoomed = RAL::Analysis::layoutChordLabels(segments, 200.0, 26.0f);
+    check(zoomed.size() == 2 && std::abs(zoomed[1].x - 400.0f) < 1e-3f && std::abs(zoomed[0].width - 200.0f) < 1e-3f,
+          "a higher pixels-per-second scales label x and width proportionally");
+}
+
+void testChordLabelNarrowSegmentNotLabelled()
+{
+    // A 0.1 s chord at 100 px/s is 10 px wide: below the 26 px minimum, so it carries no text.
+    std::vector<NoteEvent> notes = {makeNote(0.0, 0.1, 60), makeNote(0.0, 0.1, 64), makeNote(0.0, 0.1, 67)};
+    const auto segments = RAL::Analysis::analyzeChords(notes);
+    auto labels = RAL::Analysis::layoutChordLabels(segments, 100.0, 26.0f);
+    check(labels.size() == 1 && !labels[0].labelFits,
+          "a segment too narrow for its name is marked labelFits = false");
+    // Zoomed in enough, the same chord becomes wide enough to label.
+    auto wide = RAL::Analysis::layoutChordLabels(segments, 1000.0, 26.0f);
+    check(wide.size() == 1 && wide[0].labelFits, "zoomed in, the same segment is wide enough to label");
+}
+
+void testChordLabelSkipsUnrecognisedAndFlagsAmbiguous()
+{
+    // A dyad (no reliable chord) produces no label.
+    const auto dyad = RAL::Analysis::analyzeChords({makeNote(0.0, 1.0, 60), makeNote(0.0, 1.0, 67)});
+    check(RAL::Analysis::layoutChordLabels(dyad, 100.0, 26.0f).empty(),
+          "an unrecognised segment produces no label");
+
+    // An augmented triad is ambiguous; the label carries that flag for the restrained UI marker.
+    const auto aug = RAL::Analysis::analyzeChords({makeNote(0.0, 1.0, 60), makeNote(0.0, 1.0, 64), makeNote(0.0, 1.0, 68)});
+    auto labels = RAL::Analysis::layoutChordLabels(aug, 100.0, 26.0f);
+    check(labels.size() == 1 && labels[0].ambiguous, "an ambiguous chord is flagged on its label");
+}
+
 } // namespace
 
 int main()
@@ -1178,6 +1258,13 @@ int main()
     testIntegrationIncrementalUpdatesLeaveNoStaleResults();
     testIntegrationDoesNotMutateNotes();
     testIntegrationStaleSessionCannotOverwriteNewer();
+
+    testStoreSameSessionUpdateAppliesWhileLive();
+    testStoreClearThenSameSessionRejected();
+    testStoreNewSessionAfterClearApplies();
+    testChordLabelPositionsAndZoom();
+    testChordLabelNarrowSegmentNotLabelled();
+    testChordLabelSkipsUnrecognisedAndFlagsAmbiguous();
 
     if (gFailures > 0) {
         std::printf("%d check(s) failed\n", gFailures);
