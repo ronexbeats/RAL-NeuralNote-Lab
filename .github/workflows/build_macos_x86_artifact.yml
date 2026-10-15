@@ -1,0 +1,84 @@
+name: Build macOS x86_64 artifacts
+
+# Minimal, UNSIGNED Intel (x86_64) build of the Standalone app and VST3 plugin, uploaded as
+# downloadable GitHub Actions artifacts. Needs no Apple signing/notarization secrets. Triggered by
+# pushing to the feature branch, so it builds that branch's code without touching main or
+# ral-development. Reuses the project's own CMake flags (mirrors .github/scripts/configure_and_build.py).
+on:
+  push:
+    branches: [ral-dev-chord-analyzer]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest        # Apple Silicon runner; x86_64 is cross-compiled, as upstream does.
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install tools
+        run: |
+          brew install ccache ninja
+          xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+          sw_vers && xcodebuild -version
+
+      - name: Configure (x86_64, Release)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLTO=ON \
+            -DNEURALNOTE_SYMBOLS=ON \
+            -DMUSCRIPTOR_BUILD_TESTS=OFF \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DMUSCRIPTOR_METAL=ON \
+            -DMUSCRIPTOR_METAL_PRECOMPILED=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build Standalone (first priority)
+        run: cmake --build build --target NeuralNote_Standalone
+
+      - name: Build VST3 (only reached if Standalone succeeded)
+        run: cmake --build build --target NeuralNote_VST3
+
+      - name: List built bundles
+        if: always()
+        run: find build/NeuralNote_artefacts -maxdepth 3 \( -name "*.app" -o -name "*.vst3" \) -print
+
+      - name: Upload Standalone app (x86_64)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeuralNote-macOS-x86_64-Standalone
+          path: build/NeuralNote_artefacts/Release/Standalone/*.app
+          if-no-files-found: warn
+
+      - name: Upload VST3 (x86_64)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeuralNote-macOS-x86_64-VST3
+          path: build/NeuralNote_artefacts/Release/VST3/*.vst3
+          if-no-files-found: warn
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build/CMakeCache.txt
+            build/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
