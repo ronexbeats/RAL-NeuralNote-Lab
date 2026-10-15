@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "ChordAnalyzer.h"
 #include "NoteEvent.h"
 #include "NoteScheduler.h"
 #include "PianoRollRange.h"
@@ -813,6 +814,208 @@ void testVisibleBarsCoverTheClipAndStopAtTheAudio()
           "a zero zoom gives nothing rather than dividing by it");
 }
 
+// ---------------------------------------------------------------------------------------------
+// RAL Phase 2A: chord analysis engine. Same check()/makeNote conventions as above. Deterministic
+// inputs only -- every note's time and pitch is fixed, so every expected chord name is exact.
+// ---------------------------------------------------------------------------------------------
+
+// MIDI pitches around middle C (C4 = 60).
+constexpr int C4 = 60;
+constexpr int Cs4 = 61; // C#/Db
+constexpr int D4 = 62;
+constexpr int Ds4 = 63; // D#/Eb
+constexpr int E4 = 64;
+constexpr int F4 = 65;
+constexpr int Fs4 = 66; // F#/Gb
+constexpr int G4 = 67;
+constexpr int Gs4 = 68; // G#/Ab
+constexpr int A4 = 69;
+constexpr int As4 = 70; // A#/Bb
+constexpr int B4 = 71;
+constexpr int C5 = 72;
+constexpr int E5 = 76;
+constexpr int G5 = 79;
+
+/** @return The best candidate's name for the one chord formed by a block of simultaneous notes. */
+std::string bestChordName(std::vector<NoteEvent> inNotes, RAL::Analysis::ChordAnalyzerOptions inOpts = {})
+{
+    const auto segments = RAL::Analysis::analyzeChords(inNotes, inOpts);
+    if (segments.size() != 1) {
+        return "<" + std::to_string(segments.size()) + " segments>";
+    }
+    const auto* best = segments.front().best();
+    return best == nullptr ? "<none>" : best->name;
+}
+
+void testBasicTriads()
+{
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4)}) == "C",
+          "C-E-G is a C major triad");
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, Ds4), makeNote(0.0, 1.0, G4)}) == "Cm",
+          "C-Eb-G is a C minor triad");
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, Ds4), makeNote(0.0, 1.0, Fs4)}) == "Cdim",
+          "C-Eb-Gb is a C diminished triad");
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, Gs4)}) == "Caug",
+          "C-E-G# is a C augmented triad (best reading in root position)");
+}
+
+void testSeventhChords()
+{
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4),
+                         makeNote(0.0, 1.0, As4)})
+              == "C7",
+          "C-E-G-Bb is a dominant seventh");
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4),
+                         makeNote(0.0, 1.0, B4)})
+              == "Cmaj7",
+          "C-E-G-B is a major seventh");
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, Ds4), makeNote(0.0, 1.0, G4),
+                         makeNote(0.0, 1.0, As4)})
+              == "Cm7",
+          "C-Eb-G-Bb is a minor seventh");
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, Ds4), makeNote(0.0, 1.0, Fs4),
+                         makeNote(0.0, 1.0, As4)})
+              == "Cm7b5",
+          "C-Eb-Gb-Bb is a half-diminished seventh");
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, Ds4), makeNote(0.0, 1.0, Fs4),
+                         makeNote(0.0, 1.0, A4)})
+              == "Cdim7",
+          "C-Eb-Gb-A is a fully diminished seventh (best reading in root position)");
+}
+
+void testInversions()
+{
+    // First inversion: E in the bass, C major triad -> C/E.
+    check(bestChordName({makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4), makeNote(0.0, 1.0, C5)}) == "C/E",
+          "E-G-C is a C major triad, first inversion");
+    // Second inversion: G in the bass -> C/G.
+    check(bestChordName({makeNote(0.0, 1.0, G4), makeNote(0.0, 1.0, C5), makeNote(0.0, 1.0, E5)}) == "C/G",
+          "G-C-E is a C major triad, second inversion");
+
+    const auto segments = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4), makeNote(0.0, 1.0, C5)});
+    check(segments.size() == 1 && segments.front().best() != nullptr
+              && segments.front().best()->inversion == 1 && segments.front().best()->rootPitchClass == 0,
+          "first inversion reports inversion 1 with root C");
+}
+
+void testOctaveDoubling()
+{
+    // C major with the root doubled an octave up: the extra C must not change the chord.
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4),
+                         makeNote(0.0, 1.0, C5)})
+              == "C",
+          "octave-doubled root is still a plain C major triad");
+    const auto segments = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4), makeNote(0.0, 1.0, C5)});
+    check(segments.size() == 1 && segments.front().pitchClasses.size() == 3,
+          "octave doubling folds to three pitch classes");
+}
+
+void testOnsetTolerance()
+{
+    RAL::Analysis::ChordAnalyzerOptions opts;
+    opts.onsetToleranceSeconds = 0.05;
+
+    // Three notes struck within the tolerance window group into one C major chord.
+    check(bestChordName({makeNote(0.00, 1.0, C4), makeNote(0.02, 1.0, E4), makeNote(0.04, 1.0, G4)}, opts) == "C",
+          "small onset differences within tolerance form one chord");
+
+    // The same notes spread beyond the tolerance are separate events, not a chord.
+    const auto spread = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 1.0, C4), makeNote(0.2, 1.0, E4), makeNote(0.4, 1.0, G4)}, opts);
+    check(spread.size() == 3, "onsets beyond the tolerance are three separate groups, not a chord");
+}
+
+void testOverlappingDifferentDurations()
+{
+    // Struck together but released at different times: still one chord, spanning the longest note.
+    const auto segments = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 0.5, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 2.0, G4)});
+    check(segments.size() == 1 && segments.front().best() != nullptr && segments.front().best()->name == "C",
+          "overlapping notes of different lengths still read as one C major");
+    check(segments.size() == 1 && std::abs(segments.front().startTime - 0.0) < 1e-9
+              && std::abs(segments.front().endTime - 2.0) < 1e-9,
+          "segment spans from earliest onset to latest offset");
+}
+
+void testDrumsExcluded()
+{
+    // A drum hit mixed into a C major triad must be ignored, leaving a clean C.
+    check(bestChordName({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4),
+                         makeNote(0.0, 1.0, 38, DRUMS)})
+              == "C",
+          "a drum note mixed in is excluded from the chord");
+
+    // Drums only -> nothing to analyse.
+    const auto drumsOnly = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 1.0, 36, DRUMS), makeNote(0.0, 1.0, 38, DRUMS)});
+    check(drumsOnly.empty(), "a drums-only input yields no chord segments");
+}
+
+void testEmptyAndAmbiguous()
+{
+    check(RAL::Analysis::analyzeChords({}).empty(), "empty input yields no segments");
+
+    // Two notes are an interval, not a chord: a segment with no reliable name.
+    const auto dyad = RAL::Analysis::analyzeChords({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, G4)});
+    check(dyad.size() == 1 && dyad.front().best() == nullptr,
+          "a two-note dyad names no chord rather than forcing one");
+
+    // A cluster that matches no template is reported unnamed, not forced.
+    const auto cluster =
+        RAL::Analysis::analyzeChords({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, Cs4), makeNote(0.0, 1.0, D4)});
+    check(cluster.size() == 1 && cluster.front().best() == nullptr,
+          "a chromatic cluster is left unnamed rather than forced");
+
+    // An augmented triad is symmetric: three equal roots, so it is flagged ambiguous while still
+    // offering a sensible root-position best reading.
+    const auto aug = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, Gs4)});
+    check(aug.size() == 1 && aug.front().isAmbiguous && aug.front().candidates.size() == 3,
+          "an augmented triad is marked ambiguous with three competing roots");
+
+    // A fully diminished seventh is symmetric four ways.
+    const auto dim7 = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, Ds4), makeNote(0.0, 1.0, Fs4), makeNote(0.0, 1.0, A4)});
+    check(dim7.size() == 1 && dim7.front().isAmbiguous && dim7.front().candidates.size() == 4,
+          "a fully diminished seventh is marked ambiguous with four competing roots");
+}
+
+void testInvalidPitchesExcluded()
+{
+    // Out-of-range MIDI pitches must be dropped, not folded into a pitch class. A negative pitch
+    // alongside two valid ones must not fabricate a chord from the wrapped value.
+    const auto neg = RAL::Analysis::analyzeChords(
+        {makeNote(0.0, 1.0, -1), makeNote(0.0, 1.0, E4), makeNote(0.0, 1.0, G4)});
+    check(neg.size() == 1 && neg.front().pitchClasses.size() == 2 && neg.front().best() == nullptr,
+          "a negative pitch is excluded, leaving a two-note dyad with no forced chord");
+
+    // Three pitches all above 127 leave nothing to analyse.
+    check(RAL::Analysis::analyzeChords(
+              {makeNote(0.0, 1.0, 132), makeNote(0.0, 1.0, 136), makeNote(0.0, 1.0, 139)})
+              .empty(),
+          "pitches above 127 are all excluded, yielding no segments");
+
+    // A valid C major with one out-of-range intruder still reads as a clean C.
+    const auto mixed = RAL::Analysis::analyzeChords({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4),
+                                                     makeNote(0.0, 1.0, G4), makeNote(0.0, 1.0, 200)});
+    check(mixed.size() == 1 && mixed.front().best() != nullptr && mixed.front().best()->name == "C",
+          "an out-of-range intruder does not disturb a valid C major");
+}
+
+void testSilenceAndGaps()
+{
+    // Two chords separated by a gap: a C major then, later, a G major -> two named segments.
+    const auto segments = RAL::Analysis::analyzeChords({makeNote(0.0, 1.0, C4), makeNote(0.0, 1.0, E4),
+                                                        makeNote(0.0, 1.0, G4), makeNote(2.0, 3.0, G4),
+                                                        makeNote(2.0, 3.0, B4), makeNote(2.0, 3.0, D4 + 12)});
+    check(segments.size() == 2, "two onset groups separated by a gap are two segments");
+    check(segments.size() == 2 && segments[0].best() != nullptr && segments[0].best()->name == "C"
+              && segments[1].best() != nullptr && segments[1].best()->name == "G",
+          "the two segments read as C then G across the gap");
+}
+
 } // namespace
 
 int main()
@@ -851,6 +1054,17 @@ int main()
     testBarsTileTheAudioWithoutGaps();
     testBarStartsDoNotDependOnScroll();
     testVisibleBarsCoverTheClipAndStopAtTheAudio();
+
+    testBasicTriads();
+    testSeventhChords();
+    testInversions();
+    testOctaveDoubling();
+    testOnsetTolerance();
+    testOverlappingDifferentDurations();
+    testDrumsExcluded();
+    testEmptyAndAmbiguous();
+    testInvalidPitchesExcluded();
+    testSilenceAndGaps();
 
     if (gFailures > 0) {
         std::printf("%d check(s) failed\n", gFailures);
